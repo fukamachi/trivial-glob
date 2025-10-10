@@ -1,0 +1,26 @@
+(defsystem "trivial-glob"
+  :description "Shell-style glob pattern matching and filesystem globbing for Common Lisp"
+  :author "Your Name <your.email@example.com>"
+  :license "MIT"
+  :version "0.1.0"
+  :depends-on ("alexandria"
+               "cl-ppcre"
+               "uiop")
+  :pathname "src"
+  :serial t
+  :components
+  ((:file "pattern")
+   (:file "filesystem")
+   (:file "main"))
+  :in-order-to ((test-op (test-op "trivial-glob/tests"))))
+
+(defsystem "trivial-glob/tests"
+  :description "Test suite for trivial-glob"
+  :depends-on ("trivial-glob"
+               "rove")
+  :pathname "tests"
+  :serial t
+  :components
+  ((:file "pattern")
+   (:file "filesystem"))
+  :perform (test-op (op c) (symbol-call :rove '#:run c)))
