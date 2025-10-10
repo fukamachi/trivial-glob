@@ -76,8 +76,14 @@ Returns a list of pathnames matching the pattern."
       ;; If only name/type have wildcards (no directory wildcards)
       (when (and (or has-name-wildcard-p has-type-wildcard-p)
                  (not has-dir-wildcard-p))
-        ;; Check if the directory path contains a symlink
+        ;; Check if the directory exists
         (let ((dir-path (uiop:pathname-directory-pathname path)))
+          (unless (uiop:directory-exists-p dir-path)
+            (error 'file-error
+                   :pathname dir-path
+                   :format-control "Directory does not exist: ~A"
+                   :format-arguments (list dir-path)))
+          ;; Check if the directory path contains a symlink
           (when (and (not follow-symlinks) (symlink-p dir-path))
             (return-from glob-filesystem nil)))
         (return-from glob-filesystem
@@ -122,9 +128,12 @@ Returns a list of pathnames matching the pattern."
                                        :defaults pattern-path)
                         (uiop:getcwd))))
 
-      ;; If base doesn't exist, return empty
+      ;; If base doesn't exist, signal an error
       (unless (uiop:directory-exists-p base-dir)
-        (return-from glob-match-filesystem nil))
+        (error 'file-error
+               :pathname base-dir
+               :format-control "Directory does not exist: ~A"
+               :format-arguments (list base-dir)))
 
       ;; If no remaining dir components, match files in base directory
       (if (null remaining-components)

@@ -117,6 +117,10 @@ Return a list of pathnames matching the glob pattern.
 
 **Returns:** List of pathnames
 
+**Errors:**
+- Signals `FILE-ERROR` if the pattern contains wildcards and the base directory does not exist
+- Returns `NIL` (no error) if the pattern is a literal path and the file does not exist
+
 #### `glob-match`
 
 ```lisp
