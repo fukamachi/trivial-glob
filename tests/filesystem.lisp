@@ -80,3 +80,27 @@
     (let ((results (glob:glob (merge-pathnames "src/**/*.lisp" *test-dir*))))
       ;; Should include src/main.lisp (zero directories between src and file)
       (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results)))))
+
+(deftest brace-expansion
+  (testing "Simple brace expansion with filenames"
+    (let ((results (glob:glob (merge-pathnames "file{1,3}.txt" *test-dir*))))
+      (ok (= (length results) 2))
+      (ok (some (lambda (p) (search "file1.txt" (namestring p))) results))
+      (ok (some (lambda (p) (search "file3.txt" (namestring p))) results))))
+
+  (testing "Brace expansion with file extensions"
+    (let ((results (glob:glob (merge-pathnames "*.{txt,log}" *test-dir*))))
+      (ok (>= (length results) 3))
+      (ok (some (lambda (p) (string= (pathname-type p) "txt")) results))
+      (ok (some (lambda (p) (string= (pathname-type p) "log")) results))))
+
+  (testing "Multiple braces in pattern"
+    (let ((results (glob:glob (merge-pathnames "file{1,2}.{txt,log}" *test-dir*))))
+      (ok (>= (length results) 2))
+      (ok (some (lambda (p) (search "file1.txt" (namestring p))) results))
+      (ok (some (lambda (p) (search "file2.log" (namestring p))) results))))
+
+  (testing "Brace with single option behaves like literal"
+    (let ((results (glob:glob (merge-pathnames "file{1}.txt" *test-dir*))))
+      (ok (= (length results) 1))
+      (ok (some (lambda (p) (search "file1.txt" (namestring p))) results)))))
