@@ -1,6 +1,6 @@
 (defsystem "trivial-glob"
   :description "Shell-style glob pattern matching and filesystem globbing for Common Lisp"
-  :author "Your Name <your.email@example.com>"
+  :author "Eitaro Fukamachi <e.arrows@gmail.com>"
   :license "MIT"
   :version "0.1.0"
   :depends-on ("uiop")

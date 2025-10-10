@@ -6,8 +6,7 @@
   (:use-reexport #:trivial-glob/pattern)
   (:export
    #:glob
-   #:glob-match
-   #:compile-glob))
+   #:glob-match))
 (in-package #:trivial-glob)
 
 (defun find-brace-group (pattern start)
@@ -90,16 +89,3 @@ Examples:
                          :pathname pathname
                          :period period
                          :casefold casefold))
-
-(defun compile-glob (pattern &key pathname period casefold)
-  "Compile a glob pattern into a function for repeated matching.
-
-Returns a function that takes a string and returns T if it matches.
-
-Example:
-  (let ((matcher (compile-glob \"*.txt\")))
-    (funcall matcher \"file.txt\")) => T"
-  (pattern:compile-pattern pattern
-                           :pathname pathname
-                           :period period
-                           :casefold casefold))

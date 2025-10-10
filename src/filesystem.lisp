@@ -26,6 +26,13 @@ Returns NIL for NIL, \"*\" for :WILD, and the string itself for strings."
     ;; For other cases (like SBCL pattern objects), return wildcard
     (t "*")))
 
+(defun symlink-p (pathname)
+  "Check if PATHNAME is a symbolic link."
+  (handler-case
+      (let ((truename-result (truename pathname)))
+        (not (equal (namestring pathname) (namestring truename-result))))
+    (error () nil)))
+
 (defun glob-filesystem (pathname-or-pattern &key follow-symlinks)
   "Return a list of pathnames matching the glob pattern.
 
@@ -33,8 +40,6 @@ PATHNAME-OR-PATTERN - A pathname designator or glob pattern string.
 FOLLOW-SYMLINKS - If true, follow symbolic links during traversal.
 
 Returns a list of pathnames matching the pattern."
-  (declare (ignore follow-symlinks)) ; TODO: implement symlink following
-
   (let ((path (etypecase pathname-or-pattern
                 (pathname pathname-or-pattern)
                 (string (pathname pathname-or-pattern)))))
@@ -62,6 +67,10 @@ Returns a list of pathnames matching the pattern."
       ;; If only name/type have wildcards (no directory wildcards)
       (when (and (or has-name-wildcard-p has-type-wildcard-p)
                  (not has-dir-wildcard-p))
+        ;; Check if the directory path contains a symlink
+        (let ((dir-path (uiop:pathname-directory-pathname path)))
+          (when (and (not follow-symlinks) (symlink-p dir-path))
+            (return-from glob-filesystem nil)))
         (return-from glob-filesystem
           ;; For patterns with both name and type wildcards (or specific patterns),
           ;; use directory and filter. Otherwise use uiop:directory-files.
@@ -77,9 +86,9 @@ Returns a list of pathnames matching the pattern."
              (remove-if #'uiop:directory-pathname-p (directory path))))))
 
       ;; Has directory wildcards - perform custom pattern matching
-      (glob-match-filesystem path))))
+      (glob-match-filesystem path follow-symlinks))))
 
-(defun glob-match-filesystem (pattern-path)
+(defun glob-match-filesystem (pattern-path follow-symlinks)
   "Match PATTERN-PATH against the filesystem."
   (let* ((dir-components (pathname-directory pattern-path))
          (name (pathname-name pattern-path))
@@ -112,7 +121,9 @@ Returns a list of pathnames matching the pattern."
       (if (null remaining-components)
           (match-files-in-directory base-dir name type)
           ;; Otherwise, need to match through subdirectories
-          (match-through-directories base-dir remaining-components name type)))))
+          (let ((visited (make-hash-table :test 'equal)))
+            (match-through-directories base-dir remaining-components name type
+                                       follow-symlinks visited))))))
 
 (defun match-files-in-directory (directory name-component type-component)
   "Match files in DIRECTORY against NAME-COMPONENT and TYPE-COMPONENT patterns."
@@ -136,53 +147,75 @@ Returns a list of pathnames matching the pattern."
     (nreverse results)))
 
 (defun match-through-directories (base-dir remaining-dir-components
-                                  name-component type-component)
-  "Walk through REMAINING-DIR-COMPONENTS from BASE-DIR and match files."
+                                  name-component type-component
+                                  follow-symlinks visited)
+  "Walk through REMAINING-DIR-COMPONENTS from BASE-DIR and match files.
+VISITED is a hash table tracking visited directories to prevent infinite loops."
   (if (null remaining-dir-components)
       (match-files-in-directory base-dir name-component type-component)
       (let ((current-component (first remaining-dir-components))
             (rest-components (rest remaining-dir-components))
             (results nil))
 
-        ;; Handle :wild-inferiors (** pattern) specially
-        (cond
-          ((eq current-component :wild-inferiors)
-           ;; ** matches zero or more directory levels
-           ;; First, try matching at current level (zero directories)
-           (let ((zero-match (match-through-directories base-dir
-                                                        rest-components
-                                                        name-component
-                                                        type-component)))
-             (setf results (nconc results zero-match)))
+        ;; Get subdirectories, filtering symlinks if needed
+        (let ((all-subdirs (uiop:subdirectories base-dir)))
+          (let ((subdirs (if follow-symlinks
+                             all-subdirs
+                             (remove-if #'symlink-p all-subdirs))))
 
-           ;; Then recursively search all subdirectories
-           (let ((subdirs (uiop:subdirectories base-dir)))
-             (dolist (subdir subdirs)
-               ;; For each subdirectory, continue the ** search
-               (let ((sub-results (match-through-directories
-                                   subdir
-                                   remaining-dir-components ; Keep the ** component
-                                   name-component
-                                   type-component)))
-                 (setf results (nconc results sub-results))))))
+            ;; Handle :wild-inferiors (** pattern) specially
+            (cond
+              ((eq current-component :wild-inferiors)
+               ;; ** matches zero or more directory levels
+               ;; First, try matching at current level (zero directories)
+               (let ((zero-match (match-through-directories base-dir
+                                                            rest-components
+                                                            name-component
+                                                            type-component
+                                                            follow-symlinks
+                                                            visited)))
+                 (setf results (nconc results zero-match)))
 
-          (t
-           ;; Regular directory component (not **)
-           (let ((subdirs (uiop:subdirectories base-dir)))
-             (dolist (subdir subdirs)
-               ;; Check if subdirectory name matches current component
-               (let ((subdir-name (first (last (pathname-directory subdir)))))
-                 (when (or (eq current-component :wild)
-                           (and (stringp current-component)
-                                (stringp subdir-name)
-                                (pattern:match-pattern current-component subdir-name
-                                                       :period (not pattern:*match-dotfiles*))))
-                   ;; Recursively match in this subdirectory
-                   (let ((sub-results (match-through-directories
-                                       subdir
-                                       rest-components
-                                       name-component
-                                       type-component)))
-                     (setf results (nconc results sub-results)))))))))
+               ;; Then recursively search all subdirectories
+               (dolist (subdir subdirs)
+                 ;; Check for circular symlinks
+                 (let ((truename-str (namestring (truename subdir))))
+                   (unless (gethash truename-str visited)
+                     (setf (gethash truename-str visited) t)
+                     ;; For each subdirectory, continue the ** search
+                     (let ((sub-results (match-through-directories
+                                         subdir
+                                         remaining-dir-components ; Keep the ** component
+                                         name-component
+                                         type-component
+                                         follow-symlinks
+                                         visited)))
+                       (setf results (nconc results sub-results)))
+                     (remhash truename-str visited)))))
+
+              (t
+               ;; Regular directory component (not **)
+               (dolist (subdir subdirs)
+                 ;; Check if subdirectory name matches current component
+                 (let ((subdir-name (first (last (pathname-directory subdir)))))
+                   (when (or (eq current-component :wild)
+                             (and (stringp current-component)
+                                  (stringp subdir-name)
+                                  (pattern:match-pattern current-component subdir-name
+                                                         :period (not pattern:*match-dotfiles*))))
+                     ;; Check for circular symlinks
+                     (let ((truename-str (namestring (truename subdir))))
+                       (unless (gethash truename-str visited)
+                         (setf (gethash truename-str visited) t)
+                         ;; Recursively match in this subdirectory
+                         (let ((sub-results (match-through-directories
+                                             subdir
+                                             rest-components
+                                             name-component
+                                             type-component
+                                             follow-symlinks
+                                             visited)))
+                           (setf results (nconc results sub-results)))
+                         (remhash truename-str visited))))))))))
 
         results)))

@@ -105,3 +105,28 @@
     (let ((results (glob:glob (merge-pathnames "file{1}.txt" *test-dir*))))
       (ok (= (length results) 1))
       (ok (some (lambda (p) (search "file1.txt" (namestring p))) results)))))
+
+(deftest symlink-handling
+  (testing "By default, symlinks are not followed"
+    (let ((results (glob:glob (merge-pathnames "link-to-src/*.lisp" *test-dir*))))
+      ;; Without following symlinks, should not traverse into the symlinked directory
+      (ok (null results))))
+
+  (testing "With :follow-symlinks t, symlinks are followed"
+    (let ((results (glob:glob (merge-pathnames "link-to-src/*.lisp" *test-dir*)
+                              :follow-symlinks t)))
+      ;; With symlink following, should find files in the linked directory
+      (ok (>= (length results) 1))
+      (ok (every (lambda (p) (string= (pathname-type p) "lisp")) results))))
+
+  (testing "Symlink to file is resolved"
+    (let ((results (glob:glob (merge-pathnames "link-to-file.txt" *test-dir*)
+                              :follow-symlinks t)))
+      (ok (= (length results) 1))))
+
+  (testing "Circular symlinks don't cause infinite loops"
+    ;; This should complete without hanging
+    (let ((results (glob:glob (merge-pathnames "circular-link/**/*.lisp" *test-dir*)
+                              :follow-symlinks t)))
+      ;; Should find some files but not loop infinitely
+      (ok (>= (length results) 0)))))

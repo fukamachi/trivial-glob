@@ -2,7 +2,6 @@
   (:use #:cl)
   (:export
    #:match-pattern
-   #:compile-pattern
    #:*match-dotfiles*))
 (in-package #:trivial-glob/pattern)
 
@@ -217,13 +216,3 @@ Returns T if the string matches, NIL otherwise."
                        :pathname pathname
                        :period period
                        :casefold casefold))
-
-(defun compile-pattern (pattern &key pathname period casefold)
-  "Compile a glob pattern into a function for repeated matching.
-
-Returns a function that takes a string and returns T if it matches."
-  (lambda (string)
-    (match-pattern pattern string
-                   :pathname pathname
-                   :period period
-                   :casefold casefold)))
