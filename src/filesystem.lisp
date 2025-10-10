@@ -27,10 +27,17 @@ Returns NIL for NIL, \"*\" for :WILD, and the string itself for strings."
     (t "*")))
 
 (defun symlink-p (pathname)
-  "Check if PATHNAME is a symbolic link."
+  "Check if PATHNAME is a symbolic link.
+Note: This uses a heuristic that works on most Unix systems but may not be 100% accurate
+on all platforms. It resolves relative paths to absolute before checking."
   (handler-case
-      (let ((truename-result (truename pathname)))
-        (not (equal (namestring pathname) (namestring truename-result))))
+      (let* ((absolute-path (uiop:ensure-absolute-pathname pathname *default-pathname-defaults*))
+             (truename-result (truename absolute-path))
+             (namestr-abs (namestring absolute-path))
+             (namestr-true (namestring truename-result)))
+        ;; Compare absolute path with its truename
+        ;; On Unix, symlinks will have different paths
+        (not (equal namestr-abs namestr-true)))
     (error () nil)))
 
 (defun glob-filesystem (pathname-or-pattern &key follow-symlinks)
