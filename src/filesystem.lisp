@@ -16,6 +16,16 @@ Returns T for :WILD, :WILD-INFERIORS, or implementation-specific pattern objects
   (not (or (null component)
            (stringp component))))
 
+(defun pathname-component-to-string (component)
+  "Convert a pathname component to a string pattern.
+Returns NIL for NIL, \"*\" for :WILD, and the string itself for strings."
+  (cond
+    ((null component) nil)
+    ((eq component :wild) "*")
+    ((stringp component) component)
+    ;; For other cases (like SBCL pattern objects), return wildcard
+    (t "*")))
+
 (defun glob-filesystem (pathname-or-pattern &key follow-symlinks)
   "Return a list of pathnames matching the glob pattern.
 
@@ -133,21 +143,44 @@ Returns a list of pathnames matching the pattern."
             (rest-components (rest remaining-dir-components))
             (results nil))
 
-        ;; Get subdirectories of base-dir
-        (let ((subdirs (uiop:subdirectories base-dir)))
-          (dolist (subdir subdirs)
-            ;; Check if subdirectory name matches current component
-            (let ((subdir-name (first (last (pathname-directory subdir)))))
-              (when (or (eq current-component :wild)
-                        (and (stringp current-component)
-                             (stringp subdir-name)
-                             (pattern:match-pattern current-component subdir-name)))
-                ;; Recursively match in this subdirectory
-                (let ((sub-results (match-through-directories
-                                    subdir
-                                    rest-components
-                                    name-component
-                                    type-component)))
-                  (setf results (nconc results sub-results)))))))
+        ;; Handle :wild-inferiors (** pattern) specially
+        (cond
+          ((eq current-component :wild-inferiors)
+           ;; ** matches zero or more directory levels
+           ;; First, try matching at current level (zero directories)
+           (let ((zero-match (match-through-directories base-dir
+                                                        rest-components
+                                                        name-component
+                                                        type-component)))
+             (setf results (nconc results zero-match)))
+
+           ;; Then recursively search all subdirectories
+           (let ((subdirs (uiop:subdirectories base-dir)))
+             (dolist (subdir subdirs)
+               ;; For each subdirectory, continue the ** search
+               (let ((sub-results (match-through-directories
+                                   subdir
+                                   remaining-dir-components ; Keep the ** component
+                                   name-component
+                                   type-component)))
+                 (setf results (nconc results sub-results))))))
+
+          (t
+           ;; Regular directory component (not **)
+           (let ((subdirs (uiop:subdirectories base-dir)))
+             (dolist (subdir subdirs)
+               ;; Check if subdirectory name matches current component
+               (let ((subdir-name (first (last (pathname-directory subdir)))))
+                 (when (or (eq current-component :wild)
+                           (and (stringp current-component)
+                                (stringp subdir-name)
+                                (pattern:match-pattern current-component subdir-name)))
+                   ;; Recursively match in this subdirectory
+                   (let ((sub-results (match-through-directories
+                                       subdir
+                                       rest-components
+                                       name-component
+                                       type-component)))
+                     (setf results (nconc results sub-results)))))))))
 
         results)))

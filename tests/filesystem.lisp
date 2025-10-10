@@ -56,3 +56,27 @@
                    (and (string= (pathname-type p) "lisp")
                         (search "core" (namestring p))))
                  results)))))
+
+(deftest recursive-globbing
+  (testing "** matches all subdirectories recursively"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*))))
+      ;; Should find .lisp files in src/, src/core/, src/utils/
+      (ok (>= (length results) 4))
+      (ok (every (lambda (p) (string= (pathname-type p) "lisp")) results))
+      ;; Should include files from different subdirectory levels
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))
+      (ok (some (lambda (p) (search "src/core/" (namestring p))) results))))
+
+  (testing "**/ in middle of pattern"
+    (let ((results (glob:glob (merge-pathnames "src/**/*.lisp" *test-dir*))))
+      ;; Should find .lisp files in src/ and all its subdirectories
+      (ok (>= (length results) 4))
+      (ok (every (lambda (p)
+                   (and (string= (pathname-type p) "lisp")
+                        (search "src" (namestring p))))
+                 results))))
+
+  (testing "** matches zero directories"
+    (let ((results (glob:glob (merge-pathnames "src/**/*.lisp" *test-dir*))))
+      ;; Should include src/main.lisp (zero directories between src and file)
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results)))))
