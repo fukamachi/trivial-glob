@@ -1,18 +1,14 @@
-(defpackage #:trivial-glob
+(uiop:define-package #:trivial-glob
   (:use #:cl)
   (:local-nicknames
    (#:pattern #:trivial-glob/pattern)
    (#:fs #:trivial-glob/filesystem))
+  (:use-reexport #:trivial-glob/pattern)
   (:export
    #:glob
    #:glob-match
-   #:compile-glob
-   #:*match-dotfiles*))
+   #:compile-glob))
 (in-package #:trivial-glob)
-
-(defparameter *match-dotfiles* nil
-  "When NIL, wildcards do not match leading dots in filenames.
-When T, wildcards match leading dots like any other character.")
 
 (defun find-brace-group (pattern start)
   "Find the next brace group starting from START.

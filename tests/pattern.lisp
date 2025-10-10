@@ -55,3 +55,50 @@
     (ok (not (pattern:match-pattern "[!abc]" "b")))
     (ok (pattern:match-pattern "[^0-9]" "a"))
     (ok (not (pattern:match-pattern "[^0-9]" "5")))))
+
+(deftest character-classes
+  (testing "[:alnum:] matches alphanumeric"
+    (ok (pattern:match-pattern "[[:alnum:]]" "a"))
+    (ok (pattern:match-pattern "[[:alnum:]]" "Z"))
+    (ok (pattern:match-pattern "[[:alnum:]]" "5"))
+    (ok (not (pattern:match-pattern "[[:alnum:]]" "!")))
+    (ok (not (pattern:match-pattern "[[:alnum:]]" " "))))
+
+  (testing "[:alpha:] matches letters only"
+    (ok (pattern:match-pattern "[[:alpha:]]" "a"))
+    (ok (pattern:match-pattern "[[:alpha:]]" "Z"))
+    (ok (not (pattern:match-pattern "[[:alpha:]]" "5")))
+    (ok (not (pattern:match-pattern "[[:alpha:]]" "!"))))
+
+  (testing "[:digit:] matches digits only"
+    (ok (pattern:match-pattern "[[:digit:]]" "0"))
+    (ok (pattern:match-pattern "[[:digit:]]" "9"))
+    (ok (not (pattern:match-pattern "[[:digit:]]" "a")))
+    (ok (not (pattern:match-pattern "[[:digit:]]" "!"))))
+
+  (testing "[:lower:] and [:upper:]"
+    (ok (pattern:match-pattern "[[:lower:]]" "a"))
+    (ok (pattern:match-pattern "[[:lower:]]" "z"))
+    (ok (not (pattern:match-pattern "[[:lower:]]" "A")))
+    (ok (pattern:match-pattern "[[:upper:]]" "A"))
+    (ok (pattern:match-pattern "[[:upper:]]" "Z"))
+    (ok (not (pattern:match-pattern "[[:upper:]]" "a"))))
+
+  (testing "[:space:] matches whitespace"
+    (ok (pattern:match-pattern "[[:space:]]" " "))
+    (ok (pattern:match-pattern "[[:space:]]" (string #\Tab)))
+    (ok (pattern:match-pattern "[[:space:]]" (string #\Newline)))
+    (ok (not (pattern:match-pattern "[[:space:]]" "a"))))
+
+  (testing "[:xdigit:] matches hex digits"
+    (ok (pattern:match-pattern "[[:xdigit:]]" "0"))
+    (ok (pattern:match-pattern "[[:xdigit:]]" "9"))
+    (ok (pattern:match-pattern "[[:xdigit:]]" "a"))
+    (ok (pattern:match-pattern "[[:xdigit:]]" "F"))
+    (ok (not (pattern:match-pattern "[[:xdigit:]]" "g")))
+    (ok (not (pattern:match-pattern "[[:xdigit:]]" "Z"))))
+
+  (testing "Character classes in complex patterns"
+    (ok (pattern:match-pattern "test[[:digit:]].txt" "test5.txt"))
+    (ok (pattern:match-pattern "[[:alpha:]]*[[:digit:]]" "abc123"))
+    (ok (not (pattern:match-pattern "[[:digit:]]*" "abc")))))

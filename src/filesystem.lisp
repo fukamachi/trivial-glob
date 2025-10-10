@@ -126,7 +126,8 @@ Returns a list of pathnames matching the pattern."
             (file-type (pathname-type file)))
         (when (and (or (null name-pattern)
                        (pattern:match-pattern name-pattern
-                                              (if file-name (string file-name) "")))
+                                              (if file-name (string file-name) "")
+                                              :period (not pattern:*match-dotfiles*)))
                    (or (null type-pattern)
                        (pattern:match-pattern type-pattern
                                               (if file-type (string file-type) ""))))
@@ -174,7 +175,8 @@ Returns a list of pathnames matching the pattern."
                  (when (or (eq current-component :wild)
                            (and (stringp current-component)
                                 (stringp subdir-name)
-                                (pattern:match-pattern current-component subdir-name)))
+                                (pattern:match-pattern current-component subdir-name
+                                                       :period (not pattern:*match-dotfiles*))))
                    ;; Recursively match in this subdirectory
                    (let ((sub-results (match-through-directories
                                        subdir
