@@ -1,5 +1,7 @@
 # trivial-glob
 
+[![CI](https://github.com/fukamachi/trivial-glob/actions/workflows/ci.yml/badge.svg)](https://github.com/fukamachi/trivial-glob/actions/workflows/ci.yml)
+
 Shell-style glob pattern matching and filesystem globbing for Common Lisp.
 
 ## Usage
