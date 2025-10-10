@@ -103,14 +103,7 @@ Returns a function that takes a string and returns T if it matches.
 Example:
   (let ((matcher (compile-glob \"*.txt\")))
     (funcall matcher \"file.txt\")) => T"
-  (let* ((regex (pattern:glob-to-regex pattern
-                                       :pathname pathname
-                                       :period period
-                                       :casefold casefold))
-         ;; Add case-insensitive flag to regex if needed
-         (final-regex (if casefold
-                          (concatenate 'string "(?i)" regex)
-                          regex))
-         (scanner (cl-ppcre:create-scanner final-regex)))
-    (lambda (string)
-      (and (cl-ppcre:scan scanner string) t))))
+  (pattern:compile-pattern pattern
+                           :pathname pathname
+                           :period period
+                           :casefold casefold))

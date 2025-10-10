@@ -2,8 +2,7 @@
   (:use #:cl
         #:rove)
   (:local-nicknames
-   (#:glob #:trivial-glob)
-   (#:a #:alexandria)))
+   (#:glob #:trivial-glob)))
 (in-package #:trivial-glob/tests/filesystem)
 
 (defvar *test-dir*
@@ -37,7 +36,9 @@
       (ok (>= (length results) 2))
       (ok (every (lambda (p)
                    (and (string= (pathname-type p) "txt")
-                        (a:starts-with-subseq "file" (pathname-name p))))
+                        (let ((name (pathname-name p)))
+                          (and (>= (length name) 4)
+                               (string= "file" name :end2 4)))))
                  results)))))
 
 (deftest directory-pattern-matching

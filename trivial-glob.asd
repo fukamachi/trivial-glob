@@ -3,9 +3,7 @@
   :author "Your Name <your.email@example.com>"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("alexandria"
-               "cl-ppcre"
-               "uiop")
+  :depends-on ("uiop")
   :pathname "src"
   :serial t
   :components
