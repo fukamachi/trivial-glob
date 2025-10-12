@@ -74,8 +74,10 @@ Use it when you need richer patterns than basic wildcards provided by UIOP.
 ;; Patterns with */ explicitly match at any directory depth
 (glob "**/*.lisp" :exclude "*/generated/*.lisp")  ; Same as above
 
-;; Directory exclusion with trailing /
+;; Directory exclusion with trailing / or /**
 (glob "**/*" :exclude "build/")  ; Excludes all files in build/ recursively
+(glob "**/*" :exclude "build/**")  ; Same as above (equivalent)
+(glob "**/*" :exclude "**/build/**")  ; Same as above (explicit)
 (glob "**/*.lisp" :exclude "vendor/")  ; Excludes all .lisp files in vendor/
 (glob "**/*" :exclude '("build/" "dist/"))  ; Excludes multiple directories
 
@@ -169,7 +171,7 @@ Return a list of pathnames matching the glob pattern.
 **Arguments:**
 - `pathname-or-pattern` - A pathname designator or glob pattern string
 - `follow-symlinks` - If true, follow symbolic links during traversal (default: `nil`)
-- `exclude` - Pattern or list of patterns to exclude from results. Patterns without `/` match against filename only. Patterns with `/` that don't start with `/` are automatically prefixed with `**/` to match at any directory depth. Patterns ending with `/` are treated as directory exclusions and match all files within that directory recursively. Absolute paths (starting with `/`) match literally.
+- `exclude` - Pattern or list of patterns to exclude from results. Patterns without `/` match against filename only. Patterns with `/` that don't start with `/` are automatically prefixed with `**/` to match at any directory depth. Patterns ending with `/` or `/**` are treated as directory exclusions and match all files within that directory recursively. Absolute paths (starting with `/`) match literally.
 
 **Returns:** List of pathnames
 

@@ -247,4 +247,35 @@
       (ok (not (some (lambda (p) (equal (namestring p) absolute-file-str)) results)))
       ;; Should include other files
       (ok (some (lambda (p) (search "/core/" (namestring p))) results))
-      (ok (some (lambda (p) (search "/utils/" (namestring p))) results)))))
+      (ok (some (lambda (p) (search "/utils/" (namestring p))) results))))
+
+  (testing "Exclude pattern ending with /** (recursive)"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                              :exclude "**/core/**")))
+      ;; Should exclude ALL files under core/ recursively
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results)))
+      ;; Should include other files
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))
+      (ok (some (lambda (p) (search "/utils/" (namestring p))) results))))
+
+  (testing "Exclude dir/ should match same as dir/**"
+    (let ((results-with-slash (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                                         :exclude "core/"))
+          (results-with-doublestar (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                                              :exclude "**/core/**")))
+      ;; Both should exclude all files in core/ recursively
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results-with-slash)))
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results-with-doublestar)))
+      ;; Both should have the same results
+      (ok (= (length results-with-slash) (length results-with-doublestar)))))
+
+  (testing "Exclude **/dir/** should match same as **/dir/**/* (Case 1: nested **/ with wildcards)"
+    (let ((results-without-star (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                                           :exclude "**/core/**"))
+          (results-with-star (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                                        :exclude "**/core/**/*")))
+      ;; Both should exclude all files in core/ recursively
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results-without-star)))
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results-with-star)))
+      ;; Both should produce identical results
+      (ok (= (length results-without-star) (length results-with-star))))))

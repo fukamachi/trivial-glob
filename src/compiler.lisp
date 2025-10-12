@@ -431,6 +431,72 @@ Returns a function (string) -> boolean that tests if a string matches the patter
       ;; Generate and return matcher function
       (generate-pattern-matcher root-node pathname period casefold))))
 
+;;; Exclusion Pattern Helpers
+
+(defun normalize-exclusion-pattern (pattern)
+  "Normalize an exclusion pattern for consistent matching.
+
+Returns the normalized pattern string with the following transformations:
+- Trailing '/' is converted to '/**' for directory exclusion
+- Relative paths (with '/' but not starting with '/' or '**') are prefixed with '**/'
+- Leading '*/' is converted to '**/'
+
+Examples:
+  \"build/\"       => \"build/**\"
+  \"*/core/*.lisp\" => \"**/core/*.lisp\"
+  \"build/*.log\"   => \"**/build/*.log\"
+  \"/tmp/out.txt\"  => \"/tmp/out.txt\" (absolute, unchanged)
+  \"*.log\"         => \"*.log\" (filename-only, unchanged)"
+  (check-type pattern string)
+  (let ((normalized pattern))
+    ;; Step 1: Handle trailing / → /**
+    (when (and (> (length normalized) 0)
+               (char= (char normalized (1- (length normalized))) #\/))
+      (setf normalized (concatenate 'string
+                                    (subseq normalized 0 (1- (length normalized)))
+                                    "/**")))
+
+    ;; Step 2: Handle relative paths (only if contains /)
+    (when (find #\/ normalized)
+      (cond
+        ;; Already starts with **/ - no change
+        ((and (>= (length normalized) 3)
+              (string= "**/" normalized :end2 3))
+         normalized)
+        ;; Starts with */ - convert to **/
+        ((and (>= (length normalized) 2)
+              (char= (char normalized 0) #\*)
+              (char= (char normalized 1) #\/))
+         (setf normalized (concatenate 'string "**" (subseq normalized 1))))
+        ;; Starts with / - absolute path, no change
+        ((char= (char normalized 0) #\/)
+         normalized)
+        ;; Relative path - prepend **/
+        (t
+         (setf normalized (concatenate 'string "**/" normalized)))))
+
+    normalized))
+
+(defun make-directory-substring-matcher (dir-name)
+  "Create a matcher that checks if pathname contains 'dir-name/' anywhere.
+
+Used for patterns like **/build/** or **/build/**/* which should match
+all files recursively within directories named 'build'."
+  (let ((search-string (concatenate 'string dir-name "/")))
+    (lambda (pathname)
+      (search search-string (namestring pathname)))))
+
+(defun make-suffix-at-any-depth-matcher (suffix-pattern)
+  "Create a matcher that tries to match suffix-pattern at any position in the pathname.
+
+Used for patterns like **/src/*.lisp which should match *.lisp anywhere
+after 'src' in the path."
+  (let ((suffix-matcher (compile-pattern suffix-pattern :pathname t)))
+    (lambda (pathname)
+      (let ((path-str (namestring pathname)))
+        (loop for i from 0 below (length path-str)
+              thereis (funcall suffix-matcher (subseq path-str i)))))))
+
 (defun compile-exclusion-pattern (pattern)
   "Compile an exclusion pattern for filtering results.
 
@@ -445,8 +511,8 @@ Exclusion patterns have special semantics:
 - Patterns with '/' that don't start with '/' are treated as relative and
   automatically prefixed with '**/' to match at any depth
 - Patterns starting with '/' match absolute paths literally
-- Patterns ending with '/' are treated as directory exclusions and transformed
-  to 'pattern/**' to match all files recursively within that directory
+- Patterns ending with '/' or '/**' are treated as directory exclusions and
+  match all files recursively within that directory
 
 Examples:
   (compile-exclusion-pattern \"*.log\")         ; Matches any .log file
@@ -455,52 +521,49 @@ Examples:
   (compile-exclusion-pattern \"*/core/*.lisp\") ; Matches core/*.lisp at any depth
   (compile-exclusion-pattern \"/tmp/out.txt\")  ; Matches absolute path only
   (compile-exclusion-pattern \"build/\")        ; Matches all files in build/ recursively
-  (compile-exclusion-pattern \"src/vendor/\")   ; Matches all files in src/vendor/"
+  (compile-exclusion-pattern \"build/**\")      ; Same as above (recursive)
+  (compile-exclusion-pattern \"**/build/**\")   ; Same as above (explicit)"
   (check-type pattern string)
-  ;; Handle directory patterns ending with /
-  (when (and (> (length pattern) 0)
-             (char= (char pattern (1- (length pattern))) #\/))
-    ;; Pattern ends with / - treat as directory exclusion
-    ;; Replace trailing / with /** to match all files recursively
-    (setf pattern (concatenate 'string
-                               (subseq pattern 0 (1- (length pattern)))
-                               "/**")))
-  (let ((has-slash-p (find #\/ pattern)))
-    (if has-slash-p
-        ;; Match against full pathname
-        ;; Handle **/ or leading */ patterns specially
-        (let ((doublestar-pos (search "**/" pattern)))
-          (if doublestar-pos
-              ;; Pattern contains **/ - match the part after ** at any depth
-              (let* ((after-doublestar (subseq pattern (+ doublestar-pos 3)))
-                     (suffix-matcher (compile-pattern after-doublestar :pathname t)))
-                (lambda (pathname)
-                  (let ((path-str (namestring pathname)))
-                    ;; Try to match suffix at any position in the path
-                    (loop for i from 0 below (length path-str)
-                          thereis (funcall suffix-matcher (subseq path-str i))))))
-              ;; No **/, convert to **/ pattern for matching at any depth
-              (let* ((adjusted-pattern (cond
-                                         ;; Already starts with */ - convert to **/
-                                         ((and (>= (length pattern) 2)
-                                               (char= (char pattern 0) #\*)
-                                               (char= (char pattern 1) #\/))
-                                          (concatenate 'string "**/" (subseq pattern 2)))
-                                         ;; Starts with / - absolute path, use as-is
-                                         ((char= (char pattern 0) #\/)
-                                          pattern)
-                                         ;; Relative pattern without leading wildcard
-                                         ;; Since results are always absolute, prepend **/
-                                         (t
-                                          (concatenate 'string "**/" pattern)))))
-                (if (search "**/" adjusted-pattern)
-                    ;; Now it has **/, recursively call with adjusted pattern
-                    (compile-exclusion-pattern adjusted-pattern)
-                    ;; No **/, regular pattern matching
-                    (let ((matcher (compile-pattern adjusted-pattern :pathname t)))
-                      (lambda (pathname)
-                        (funcall matcher (namestring pathname))))))))
-        ;; Match against just filename
-        (let ((matcher (compile-pattern pattern :pathname nil)))
-          (lambda (pathname)
-            (funcall matcher (file-namestring pathname)))))))
+  (let ((normalized (normalize-exclusion-pattern pattern)))
+    ;; Dispatch based on pattern type
+    (cond
+      ;; No slash: match against filename only
+      ((not (find #\/ normalized))
+       (let ((matcher (compile-pattern normalized :pathname nil)))
+         (lambda (pathname)
+           (funcall matcher (file-namestring pathname)))))
+
+      ;; Absolute path: match literally
+      ((char= (char normalized 0) #\/)
+       (let ((matcher (compile-pattern normalized :pathname t)))
+         (lambda (pathname)
+           (funcall matcher (namestring pathname)))))
+
+      ;; Pattern starts with **/ (depth-agnostic matching)
+      ((and (>= (length normalized) 3)
+            (string= "**/" normalized :end2 3))
+       (let* ((after-doublestar (subseq normalized 3))
+              (nested-doublestar-pos (search "**/" after-doublestar)))
+         (cond
+           ;; Contains nested **/ (e.g., **/build/**/* or **/build/**/sub/**)
+           ;; Extract directory name before the nested **/
+           (nested-doublestar-pos
+            (let ((dir-name (subseq after-doublestar 0 (1- nested-doublestar-pos))))
+              (make-directory-substring-matcher dir-name)))
+
+           ;; Ends with /** (e.g., **/build/**)
+           ;; This is directory exclusion
+           ((and (>= (length after-doublestar) 3)
+                 (string= "/**" after-doublestar
+                          :start2 (- (length after-doublestar) 3)))
+            (let ((dir-name (subseq after-doublestar 0
+                                   (- (length after-doublestar) 3))))
+              (make-directory-substring-matcher dir-name)))
+
+           ;; Regular suffix pattern (e.g., **/src/*.lisp)
+           (t
+            (make-suffix-at-any-depth-matcher after-doublestar)))))
+
+      ;; Should not reach here (normalize-exclusion-pattern should handle all cases)
+      (t
+       (error "Unexpected exclusion pattern form: ~S" normalized)))))
