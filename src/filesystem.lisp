@@ -57,14 +57,33 @@ on all platforms. It resolves relative paths to absolute before checking."
         (not (equal namestr-abs namestr-true)))
     (error () nil)))
 
-(defun glob-filesystem (pathname-or-pattern &key follow-symlinks)
+(defun filter-excluded (pathnames exclude-matchers)
+  "Filter out pathnames that match any exclude pattern.
+PATHNAMES - List of pathnames to filter.
+EXCLUDE-MATCHERS - List of compiled exclusion matcher functions, or NIL.
+Returns filtered list of pathnames."
+  (if (null exclude-matchers)
+      pathnames
+      (remove-if (lambda (pathname)
+                   (some (lambda (matcher)
+                           (funcall matcher pathname))
+                         exclude-matchers))
+                 pathnames)))
+
+(defun glob-filesystem (pathname-or-pattern &key follow-symlinks exclude)
   "Return a list of pathnames matching the glob pattern.
 
 PATHNAME-OR-PATTERN - A pathname designator or glob pattern string.
 FOLLOW-SYMLINKS - If true, follow symbolic links during traversal.
+EXCLUDE - A pattern string or list of pattern strings to exclude from results.
 
 Returns a list of pathnames matching the pattern."
-  (let ((pattern-string (etypecase pathname-or-pattern
+  ;; Compile exclude patterns once
+  (let ((exclude-matchers
+          (when exclude
+            (let ((patterns (if (listp exclude) exclude (list exclude))))
+              (mapcar #'compiler:compile-exclusion-pattern patterns))))
+        (pattern-string (etypecase pathname-or-pattern
                           (pathname (namestring pathname-or-pattern))
                           (string
                            ;; Expand tilde if present
@@ -108,7 +127,7 @@ Returns a list of pathnames matching the pattern."
             (let ((path (pathname pattern-string)))
               (return-from glob-filesystem
                 (when (uiop:file-exists-p path)
-                  (list (truename path))))))
+                  (filter-excluded (list (truename path)) exclude-matchers)))))
 
           ;; Compile filename patterns once
           (let ((name-matcher (when has-name-wildcard-p
@@ -139,15 +158,19 @@ Returns a list of pathnames matching the pattern."
                 (when (and (not follow-symlinks) (symlink-p dir-path))
                   (return-from glob-filesystem nil))
                 (return-from glob-filesystem
-                  (match-files-in-directory dir-path
-                                            name-pattern name-matcher
-                                            type-pattern type-matcher))))
+                  (filter-excluded
+                   (match-files-in-directory dir-path
+                                             name-pattern name-matcher
+                                             type-pattern type-matcher)
+                   exclude-matchers))))
 
             ;; Has directory wildcards - perform custom pattern matching
-            (glob-match-filesystem dir-components
-                                   name-pattern name-matcher
-                                   type-pattern type-matcher
-                                   follow-symlinks)))))))
+            (filter-excluded
+             (glob-match-filesystem dir-components
+                                    name-pattern name-matcher
+                                    type-pattern type-matcher
+                                    follow-symlinks)
+             exclude-matchers)))))))
 
 (defun match-files-in-directory (directory name-pattern name-matcher type-pattern type-matcher)
   "Match files in DIRECTORY using compiled matchers.

@@ -43,16 +43,20 @@ Example: 'file{1,2}.{txt,log}' => ('file1.txt' 'file1.log' 'file2.txt' 'file2.lo
         ;; No brace groups found, return pattern as-is
         (list pattern))))
 
-(defun glob (pathname-or-pattern &key follow-symlinks)
+(defun glob (pathname-or-pattern &key follow-symlinks exclude)
   "Return a list of pathnames matching the glob pattern.
 
 PATHNAME-OR-PATTERN - A pathname designator or glob pattern string.
 FOLLOW-SYMLINKS - If true, follow symbolic links during traversal.
+EXCLUDE - A pattern string or list of pattern strings to exclude from results.
+          Excluded patterns are matched against the full pathname.
 
 Examples:
   (glob \"*.txt\")
   (glob \"src/**/*.lisp\")
   (glob \"{foo,bar}/*.c\")
+  (glob \"*.txt\" :exclude \"test*.txt\")
+  (glob \"**/*.lisp\" :exclude '(\"*/test/*.lisp\" \"*/vendor/*.lisp\"))
 
 Returns a list of pathnames matching the pattern."
   ;; Convert to namestring to check for brace expansion
@@ -63,11 +67,15 @@ Returns a list of pathnames matching the pattern."
       (if (and (= (length expanded-patterns) 1)
                (string= (first expanded-patterns) pattern-string))
           ;; No braces found, use original pattern
-          (fs:glob-filesystem pathname-or-pattern :follow-symlinks follow-symlinks)
+          (fs:glob-filesystem pathname-or-pattern
+                              :follow-symlinks follow-symlinks
+                              :exclude exclude)
           ;; Had brace expansion (even if just one result)
           (let ((all-results nil))
             (dolist (pattern expanded-patterns)
-              (let ((results (fs:glob-filesystem pattern :follow-symlinks follow-symlinks)))
+              (let ((results (fs:glob-filesystem pattern
+                                                 :follow-symlinks follow-symlinks
+                                                 :exclude exclude)))
                 (setf all-results (append all-results results))))
             ;; Remove duplicates
             (remove-duplicates all-results :test #'equal))))))

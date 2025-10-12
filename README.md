@@ -4,9 +4,29 @@
 
 Shell-style glob pattern matching and filesystem globbing for Common Lisp.
 
+**trivial-glob** brings full shell glob syntax to Common Lisp with recursive search (`**`), brace expansion (`{a,b}`), character classes, and pattern-based exclusions.
+
+Use it when you need richer patterns than basic wildcards provided by UIOP.
+
+## Quick Start
+
+```lisp
+(ql:quickload :trivial-glob)
+(use-package :trivial-glob)
+
+;; Find all Lisp files recursively
+(glob "**/*.lisp")
+
+;; Exclude test files
+(glob "**/*.lisp" :exclude "*/tests/*.lisp")
+
+;; Test if a string matches a pattern
+(glob-match "*.txt" "readme.txt")  ; => T
+```
+
 ## Usage
 
-### Basic Glob Matching
+### Filesystem Globbing
 
 ```lisp
 (use-package :trivial-glob)
@@ -26,6 +46,29 @@ Shell-style glob pattern matching and filesystem globbing for Common Lisp.
 ;; Multiple patterns with braces
 (glob "file{1,2,3}.{txt,log}")
 ;; => (#P"file1.txt" #P"file1.log" #P"file2.txt" ...)
+
+;; Follow symbolic links
+(glob "**/*.lisp" :follow-symlinks t)
+```
+
+### Excluding Files
+
+```lisp
+;; Exclude a single pattern
+(glob "*.txt" :exclude "README.txt")
+
+;; Exclude with wildcards
+(glob "**/*.lisp" :exclude "*.fasl")
+
+;; Exclude multiple patterns
+(glob "**/*.lisp" :exclude '("*/tests/*.lisp"
+                             "*/vendor/*.lisp"))
+
+;; Patterns without / match any filename at any depth
+(glob "**/*" :exclude "*.log")  ; Excludes all .log files everywhere
+
+;; Patterns with */ match at any directory depth
+(glob "**/*.lisp" :exclude "*/generated/*.lisp")  ; Excludes any generated/ dir
 ```
 
 ### Pattern Matching
@@ -106,7 +149,7 @@ Example:
 #### `glob`
 
 ```lisp
-(glob pathname-or-pattern &key follow-symlinks) => list-of-pathnames
+(glob pathname-or-pattern &key follow-symlinks exclude) => list-of-pathnames
 ```
 
 Return a list of pathnames matching the glob pattern.
@@ -114,6 +157,7 @@ Return a list of pathnames matching the glob pattern.
 **Arguments:**
 - `pathname-or-pattern` - A pathname designator or glob pattern string
 - `follow-symlinks` - If true, follow symbolic links during traversal (default: `nil`)
+- `exclude` - Pattern or list of patterns to exclude from results. Patterns without `/` match against filename only, while patterns with `/` match against the full pathname. Use `*/` to match at any directory depth.
 
 **Returns:** List of pathnames
 

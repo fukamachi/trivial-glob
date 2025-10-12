@@ -130,3 +130,48 @@
                               :follow-symlinks t)))
       ;; Should find some files but not loop infinitely
       (ok (>= (length results) 0)))))
+
+(deftest exclude-patterns
+  (testing "Exclude single pattern string"
+    (let ((results (glob:glob (merge-pathnames "*.txt" *test-dir*)
+                              :exclude "file1.txt")))
+      ;; Should include file2.txt, file3.txt but not file1.txt
+      (ok (not (some (lambda (p) (search "file1.txt" (namestring p))) results)))
+      (ok (some (lambda (p) (search "file2.txt" (namestring p))) results))))
+
+  (testing "Exclude with wildcard pattern"
+    (let ((results (glob:glob (merge-pathnames "*.txt" *test-dir*)
+                              :exclude "file[12].txt")))
+      ;; Should exclude file1.txt and file2.txt
+      (ok (not (some (lambda (p) (search "file1.txt" (namestring p))) results)))
+      (ok (not (some (lambda (p) (search "file2.txt" (namestring p))) results)))
+      (ok (some (lambda (p) (search "file3.txt" (namestring p))) results))))
+
+  (testing "Exclude multiple patterns as list"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                              :exclude '("*/core/*.lisp" "*/utils/*.lisp"))))
+      ;; Should exclude files in core/ and utils/ subdirectories
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results)))
+      (ok (not (some (lambda (p) (search "/utils/" (namestring p))) results)))
+      ;; Should still include files in src/ root
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))))
+
+  (testing "Exclude with brace expansion"
+    (let ((results (glob:glob (merge-pathnames "*.{txt,log}" *test-dir*)
+                              :exclude "*.log")))
+      ;; Should include .txt files but exclude .log files
+      (ok (some (lambda (p) (string= (pathname-type p) "txt")) results))
+      (ok (not (some (lambda (p) (string= (pathname-type p) "log")) results)))))
+
+  (testing "Exclude pattern matches nothing"
+    (let* ((all-results (glob:glob (merge-pathnames "*.txt" *test-dir*)))
+           (filtered-results (glob:glob (merge-pathnames "*.txt" *test-dir*)
+                                        :exclude "nonexistent.xyz")))
+      ;; Should return same results when exclude pattern matches nothing
+      (ok (= (length all-results) (length filtered-results)))))
+
+  (testing "Exclude all results"
+    (let ((results (glob:glob (merge-pathnames "*.txt" *test-dir*)
+                              :exclude "*.txt")))
+      ;; Should return empty list when all results are excluded
+      (ok (null results)))))

@@ -3,7 +3,8 @@
   (:export
    #:*match-dotfiles*
    ;; Main compilation function - returns a matcher function
-   #:compile-pattern))
+   #:compile-pattern
+   #:compile-exclusion-pattern))
 (in-package #:trivial-glob/compiler)
 
 (defvar *match-dotfiles* nil
@@ -429,3 +430,53 @@ Returns a function (string) -> boolean that tests if a string matches the patter
                   (make-alternatives-node :options alternative-nodes)))))
       ;; Generate and return matcher function
       (generate-pattern-matcher root-node pathname period casefold))))
+
+(defun compile-exclusion-pattern (pattern)
+  "Compile an exclusion pattern for filtering results.
+
+PATTERN - A glob pattern string used for exclusion.
+
+Returns a function (pathname) -> boolean that returns T if the pathname
+should be excluded.
+
+Exclusion patterns have special semantics:
+- If pattern contains '/', it matches against the full pathname string
+- If pattern has no '/', it matches against just the filename
+- Patterns starting with '*/' or containing '**/' match at any depth
+
+Examples:
+  (compile-exclusion-pattern \"*.log\")     ; Matches any .log file
+  (compile-exclusion-pattern \"test*.txt\")  ; Matches test*.txt anywhere
+  (compile-exclusion-pattern \"*/core/*.lisp\") ; Matches core/*.lisp at any depth"
+  (check-type pattern string)
+  (let ((has-slash-p (find #\/ pattern)))
+    (if has-slash-p
+        ;; Match against full pathname
+        ;; Handle **/ or leading */ patterns specially
+        (let ((doublestar-pos (search "**/" pattern)))
+          (if doublestar-pos
+              ;; Pattern contains **/ - match the part after ** at any depth
+              (let* ((after-doublestar (subseq pattern (+ doublestar-pos 3)))
+                     (suffix-matcher (compile-pattern after-doublestar :pathname t)))
+                (lambda (pathname)
+                  (let ((path-str (namestring pathname)))
+                    ;; Try to match suffix at any position in the path
+                    (loop for i from 0 below (length path-str)
+                          thereis (funcall suffix-matcher (subseq path-str i))))))
+              ;; No **/, convert leading */ to **/ and handle same way
+              (let* ((adjusted-pattern (if (and (>= (length pattern) 2)
+                                               (char= (char pattern 0) #\*)
+                                               (char= (char pattern 1) #\/))
+                                          (concatenate 'string "**/" (subseq pattern 2))
+                                          pattern)))
+                (if (search "**/" adjusted-pattern)
+                    ;; Now it has **/, recursively call with adjusted pattern
+                    (compile-exclusion-pattern adjusted-pattern)
+                    ;; No **/, regular pattern matching
+                    (let ((matcher (compile-pattern adjusted-pattern :pathname t)))
+                      (lambda (pathname)
+                        (funcall matcher (namestring pathname))))))))
+        ;; Match against just filename
+        (let ((matcher (compile-pattern pattern :pathname nil)))
+          (lambda (pathname)
+            (funcall matcher (file-namestring pathname)))))))
