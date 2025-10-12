@@ -442,13 +442,29 @@ should be excluded.
 Exclusion patterns have special semantics:
 - If pattern contains '/', it matches against the full pathname string
 - If pattern has no '/', it matches against just the filename
-- Patterns starting with '*/' or containing '**/' match at any depth
+- Patterns with '/' that don't start with '/' are treated as relative and
+  automatically prefixed with '**/' to match at any depth
+- Patterns starting with '/' match absolute paths literally
+- Patterns ending with '/' are treated as directory exclusions and transformed
+  to 'pattern/**' to match all files recursively within that directory
 
 Examples:
-  (compile-exclusion-pattern \"*.log\")     ; Matches any .log file
-  (compile-exclusion-pattern \"test*.txt\")  ; Matches test*.txt anywhere
-  (compile-exclusion-pattern \"*/core/*.lisp\") ; Matches core/*.lisp at any depth"
+  (compile-exclusion-pattern \"*.log\")         ; Matches any .log file
+  (compile-exclusion-pattern \"test*.txt\")     ; Matches test*.txt anywhere
+  (compile-exclusion-pattern \"build/*.log\")   ; Matches build/*.log at any depth
+  (compile-exclusion-pattern \"*/core/*.lisp\") ; Matches core/*.lisp at any depth
+  (compile-exclusion-pattern \"/tmp/out.txt\")  ; Matches absolute path only
+  (compile-exclusion-pattern \"build/\")        ; Matches all files in build/ recursively
+  (compile-exclusion-pattern \"src/vendor/\")   ; Matches all files in src/vendor/"
   (check-type pattern string)
+  ;; Handle directory patterns ending with /
+  (when (and (> (length pattern) 0)
+             (char= (char pattern (1- (length pattern))) #\/))
+    ;; Pattern ends with / - treat as directory exclusion
+    ;; Replace trailing / with /** to match all files recursively
+    (setf pattern (concatenate 'string
+                               (subseq pattern 0 (1- (length pattern)))
+                               "/**")))
   (let ((has-slash-p (find #\/ pattern)))
     (if has-slash-p
         ;; Match against full pathname
@@ -463,12 +479,20 @@ Examples:
                     ;; Try to match suffix at any position in the path
                     (loop for i from 0 below (length path-str)
                           thereis (funcall suffix-matcher (subseq path-str i))))))
-              ;; No **/, convert leading */ to **/ and handle same way
-              (let* ((adjusted-pattern (if (and (>= (length pattern) 2)
+              ;; No **/, convert to **/ pattern for matching at any depth
+              (let* ((adjusted-pattern (cond
+                                         ;; Already starts with */ - convert to **/
+                                         ((and (>= (length pattern) 2)
                                                (char= (char pattern 0) #\*)
                                                (char= (char pattern 1) #\/))
-                                          (concatenate 'string "**/" (subseq pattern 2))
-                                          pattern)))
+                                          (concatenate 'string "**/" (subseq pattern 2)))
+                                         ;; Starts with / - absolute path, use as-is
+                                         ((char= (char pattern 0) #\/)
+                                          pattern)
+                                         ;; Relative pattern without leading wildcard
+                                         ;; Since results are always absolute, prepend **/
+                                         (t
+                                          (concatenate 'string "**/" pattern)))))
                 (if (search "**/" adjusted-pattern)
                     ;; Now it has **/, recursively call with adjusted pattern
                     (compile-exclusion-pattern adjusted-pattern)

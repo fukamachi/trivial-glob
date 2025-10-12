@@ -174,4 +174,77 @@
     (let ((results (glob:glob (merge-pathnames "*.txt" *test-dir*)
                               :exclude "*.txt")))
       ;; Should return empty list when all results are excluded
-      (ok (null results)))))
+      (ok (null results))))
+
+  (testing "Exclude directory with trailing slash"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                              :exclude "core/")))
+      ;; Should exclude all files under core/ directory
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results)))
+      ;; Should still include files in src/ root and utils/
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))
+      (ok (some (lambda (p) (search "/utils/" (namestring p))) results))))
+
+  (testing "Exclude multiple directories with trailing slash"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                              :exclude '("core/" "utils/"))))
+      ;; Should exclude files in both core/ and utils/
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results)))
+      (ok (not (some (lambda (p) (search "/utils/" (namestring p))) results)))
+      ;; Should still include files in src/ root
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))))
+
+  (testing "Exclude directory path with trailing slash"
+    (let ((results (glob:glob (merge-pathnames "**/*" *test-dir*)
+                              :exclude "src/core/")))
+      ;; Should exclude all files under src/core/ specifically
+      (ok (not (some (lambda (p) (search "src/core/" (namestring p))) results)))
+      ;; Should still include files in src/ root and src/utils/
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))
+      (ok (some (lambda (p) (search "src/utils/" (namestring p))) results))))
+
+  (testing "Exclude absolute directory path with trailing slash"
+    (let* ((absolute-core-dir (merge-pathnames "src/core/" *test-dir*))
+           (absolute-core-str (namestring absolute-core-dir))
+           (results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                               :exclude absolute-core-str)))
+      ;; Should exclude files under the absolute path
+      (ok (not (some (lambda (p) (search "src/core/" (namestring p))) results)))
+      ;; Should include other files
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))))
+
+  (testing "Exclude relative path pattern (auto-prefixed with **/)"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                              :exclude "core/*.lisp")))
+      ;; Should exclude files matching core/*.lisp at any depth
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results)))
+      ;; Should include files in other directories
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))
+      (ok (some (lambda (p) (search "/utils/" (namestring p))) results))))
+
+  (testing "Exclude pattern with explicit **/"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                              :exclude "**/core/*.lisp")))
+      ;; Should exclude files in core/ at any depth
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results)))
+      ;; Should include other files
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))))
+
+  (testing "Exclude with leading */ (converted to **/)"
+    (let ((results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                              :exclude "*/core/*.lisp")))
+      ;; Should exclude files matching */core/*.lisp at any depth
+      (ok (not (some (lambda (p) (search "/core/" (namestring p))) results)))
+      ;; Should include files in src/ root
+      (ok (some (lambda (p) (search "src/main.lisp" (namestring p))) results))))
+
+  (testing "Exclude absolute path (literal match)"
+    (let* ((absolute-file (merge-pathnames "src/main.lisp" *test-dir*))
+           (absolute-file-str (namestring absolute-file))
+           (results (glob:glob (merge-pathnames "**/*.lisp" *test-dir*)
+                               :exclude absolute-file-str)))
+      ;; Should exclude only the specific absolute path
+      (ok (not (some (lambda (p) (equal (namestring p) absolute-file-str)) results)))
+      ;; Should include other files
+      (ok (some (lambda (p) (search "/core/" (namestring p))) results))
+      (ok (some (lambda (p) (search "/utils/" (namestring p))) results)))))
