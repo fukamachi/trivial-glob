@@ -7,7 +7,7 @@
   :pathname "src"
   :serial t
   :components
-  ((:file "pattern")
+  ((:file "compiler")
    (:file "filesystem")
    (:file "main"))
   :in-order-to ((test-op (test-op "trivial-glob/tests"))))
@@ -19,6 +19,6 @@
   :pathname "tests"
   :serial t
   :components
-  ((:file "pattern")
+  ((:file "compiler")
    (:file "filesystem"))
   :perform (test-op (op c) (symbol-call :rove '#:run c)))

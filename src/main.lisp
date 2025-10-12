@@ -1,10 +1,12 @@
-(uiop:define-package #:trivial-glob
+(defpackage #:trivial-glob
   (:use #:cl)
   (:local-nicknames
-   (#:pattern #:trivial-glob/pattern)
+   (#:compiler #:trivial-glob/compiler)
    (#:fs #:trivial-glob/filesystem))
-  (:use-reexport #:trivial-glob/pattern)
+  (:import-from #:trivial-glob/compiler
+                #:*match-dotfiles*)
   (:export
+   #:*match-dotfiles*
    #:glob
    #:glob-match))
 (in-package #:trivial-glob)
@@ -85,11 +87,9 @@ Examples:
   (glob-match \"*.txt\" \"file.txt\") => T
   (glob-match \"test?.c\" \"test1.c\") => T
   (glob-match \"[a-z]*\" \"hello\") => T"
-  ;; Expand braces if present, then check if string matches any expanded pattern
-  (let ((expanded-patterns (expand-braces pattern)))
-    (some (lambda (expanded-pattern)
-            (pattern:match-pattern expanded-pattern string
-                                   :pathname pathname
-                                   :period period
-                                   :casefold casefold))
-          expanded-patterns)))
+  ;; Use compiled pattern for optimized matching
+  (let ((matcher (compiler:compile-pattern pattern
+                                           :pathname pathname
+                                           :period period
+                                           :casefold casefold)))
+    (funcall matcher string)))
