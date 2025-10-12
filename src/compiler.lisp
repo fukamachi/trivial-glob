@@ -457,25 +457,29 @@ Examples:
                                     "/**")))
 
     ;; Step 2: Handle relative paths (only if contains /)
-    (when (find #\/ normalized)
-      (cond
-        ;; Already starts with **/ - no change
-        ((and (>= (length normalized) 3)
-              (string= "**/" normalized :end2 3))
-         normalized)
-        ;; Starts with */ - convert to **/
-        ((and (>= (length normalized) 2)
-              (char= (char normalized 0) #\*)
-              (char= (char normalized 1) #\/))
-         (setf normalized (concatenate 'string "**" (subseq normalized 1))))
-        ;; Starts with / - absolute path, no change
-        ((char= (char normalized 0) #\/)
-         normalized)
-        ;; Relative path - prepend **/
-        (t
-         (setf normalized (concatenate 'string "**/" normalized)))))
+    (cond
+      ;; Already starts with **/ - no change
+      ((and (>= (length normalized) 3)
+            (string= "**/" normalized :end2 3))
+       normalized)
+      ;; Starts with */ - convert to **/
+      ((and (>= (length normalized) 2)
+            (char= (char normalized 0) #\*)
+            (char= (char normalized 1) #\/))
+       (setf normalized (concatenate 'string "**" (subseq normalized 1))))
+      ;; Starts with / - absolute path, no change
+      ((char= (char normalized 0) #\/)
+       normalized)
+      ;; Relative path - prepend **/
+      (t
+       (setf normalized (concatenate 'string "**/" normalized))))
 
     normalized))
+
+(defun ensure-namestring (path)
+  (etypecase path
+    (string path)
+    (pathname (namestring path))))
 
 (defun make-directory-substring-matcher (dir-name)
   "Create a matcher that checks if pathname contains 'dir-name/' anywhere.
@@ -483,8 +487,8 @@ Examples:
 Used for patterns like **/build/** or **/build/**/* which should match
 all files recursively within directories named 'build'."
   (let ((search-string (concatenate 'string dir-name "/")))
-    (lambda (pathname)
-      (search search-string (namestring pathname)))))
+    (lambda (path)
+      (search search-string (ensure-namestring path)))))
 
 (defun make-suffix-at-any-depth-matcher (suffix-pattern)
   "Create a matcher that tries to match suffix-pattern at any position in the pathname.
@@ -492,8 +496,8 @@ all files recursively within directories named 'build'."
 Used for patterns like **/src/*.lisp which should match *.lisp anywhere
 after 'src' in the path."
   (let ((suffix-matcher (compile-pattern suffix-pattern :pathname t)))
-    (lambda (pathname)
-      (let ((path-str (namestring pathname)))
+    (lambda (path)
+      (let ((path-str (ensure-namestring path)))
         (loop for i from 0 below (length path-str)
               thereis (funcall suffix-matcher (subseq path-str i)))))))
 
@@ -530,14 +534,14 @@ Examples:
       ;; No slash: match against filename only
       ((not (find #\/ normalized))
        (let ((matcher (compile-pattern normalized :pathname nil)))
-         (lambda (pathname)
-           (funcall matcher (file-namestring pathname)))))
+         (lambda (path)
+           (funcall matcher (ensure-namestring path)))))
 
       ;; Absolute path: match literally
       ((char= (char normalized 0) #\/)
        (let ((matcher (compile-pattern normalized :pathname t)))
-         (lambda (pathname)
-           (funcall matcher (namestring pathname)))))
+         (lambda (path)
+           (funcall matcher (ensure-namestring path)))))
 
       ;; Pattern starts with **/ (depth-agnostic matching)
       ((and (>= (length normalized) 3)
@@ -557,7 +561,7 @@ Examples:
                  (string= "/**" after-doublestar
                           :start2 (- (length after-doublestar) 3)))
             (let ((dir-name (subseq after-doublestar 0
-                                   (- (length after-doublestar) 3))))
+                                    (- (length after-doublestar) 3))))
               (make-directory-substring-matcher dir-name)))
 
            ;; Regular suffix pattern (e.g., **/src/*.lisp)

@@ -221,8 +221,8 @@
 
 (deftest normalize-exclusion-pattern
   (testing "Filename-only patterns unchanged"
-    (ok (string= "*.log" (compiler::normalize-exclusion-pattern "*.log")))
-    (ok (string= "test*.txt" (compiler::normalize-exclusion-pattern "test*.txt"))))
+    (ok (string= "**/*.log" (compiler::normalize-exclusion-pattern "*.log")))
+    (ok (string= "**/test*.txt" (compiler::normalize-exclusion-pattern "test*.txt"))))
 
   (testing "Trailing slash converted to /** and prefixed with **/"
     ;; Trailing / becomes /**, then relative path gets **/ prefix

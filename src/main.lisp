@@ -1,14 +1,13 @@
-(defpackage #:trivial-glob
+(uiop:define-package #:trivial-glob
   (:use #:cl)
   (:local-nicknames
    (#:compiler #:trivial-glob/compiler)
    (#:fs #:trivial-glob/filesystem))
-  (:import-from #:trivial-glob/compiler
-                #:*match-dotfiles*)
+  (:use-reexport #:trivial-glob/compiler)
   (:export
-   #:*match-dotfiles*
    #:glob
-   #:glob-match))
+   #:glob-match
+   #:glob-exclusion-match))
 (in-package #:trivial-glob)
 
 (defun find-brace-group (pattern start)
@@ -101,3 +100,24 @@ Examples:
                                            :period period
                                            :casefold casefold)))
     (funcall matcher string)))
+
+(defun glob-exclusion-match (pattern pathname)
+  "Test whether PATHNAME matches the exclusion PATTERN.
+
+PATTERN - An exclusion pattern string with special semantics:
+          - Patterns with '/' match against the full pathname
+          - Patterns without '/' match against just the filename
+          - Relative paths are auto-prefixed with '**/' to match at any depth
+          - Trailing '/' or '/**' excludes directories recursively
+PATHNAME - A pathname designator to test against the pattern.
+
+Returns T if the pathname should be excluded, NIL otherwise.
+
+Examples:
+  (glob-exclusion-match \"*.log\" #P\"/tmp/foo.log\") => T
+  (glob-exclusion-match \"build/\" #P\"/tmp/build/out.txt\") => T
+  (glob-exclusion-match \"**/test/*.lisp\" #P\"/src/test/foo.lisp\") => T
+  (glob-exclusion-match \"*.txt\" #P\"/tmp/foo.log\") => NIL"
+  (when (funcall (compiler:compile-exclusion-pattern pattern)
+                 pathname)
+    t))
