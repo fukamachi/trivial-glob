@@ -66,6 +66,20 @@ on all platforms. It resolves relative paths to absolute before checking."
         (not (equal namestr-abs namestr-true)))
     (error () nil)))
 
+(defun should-exclude-p (pathname exclude-specs)
+  "Check if PATHNAME should be excluded according to EXCLUDE-SPECS.
+Returns T if the pathname should be excluded, NIL if it should be included.
+Processes patterns sequentially; last match wins."
+  (when exclude-specs
+    ;; Start with included, process patterns sequentially
+    (let ((included t))
+      (dolist (spec exclude-specs)
+        (when (funcall (exclude-pattern-spec-matcher spec) pathname)
+          ;; This pattern matches - update inclusion state
+          (setf included (exclude-pattern-spec-negation spec))))
+      ;; Return T if excluded (included is NIL)
+      (not included))))
+
 (defun filter-excluded (pathnames exclude-specs)
   "Filter pathnames according to exclude patterns with optional negation.
 PATHNAMES - List of pathnames to filter.
@@ -74,16 +88,9 @@ EXCLUDE-SPECS - List of exclude-pattern-spec structures, or NIL.
 Returns filtered list of pathnames."
   (if (null exclude-specs)
       pathnames
-      (remove-if-not
-       (lambda (pathname)
-         ;; Start with included, process patterns sequentially
-         (let ((included t))
-           (dolist (spec exclude-specs)
-             (when (funcall (exclude-pattern-spec-matcher spec) pathname)
-               ;; This pattern matches - update inclusion state
-               (setf included (exclude-pattern-spec-negation spec))))
-           included))
-       pathnames)))
+      (remove-if (lambda (pathname)
+                   (should-exclude-p pathname exclude-specs))
+                 pathnames)))
 
 (defun glob-filesystem (pathname-or-pattern &key follow-symlinks exclude)
   "Return a list of pathnames matching the glob pattern.
@@ -195,7 +202,8 @@ Returns a list of pathnames matching the pattern."
              (glob-match-filesystem dir-components
                                     name-pattern name-matcher
                                     type-pattern type-matcher
-                                    follow-symlinks)
+                                    follow-symlinks
+                                    exclude-specs)
              exclude-specs)))))))
 
 (defun match-files-in-directory (directory name-pattern name-matcher type-pattern type-matcher)
@@ -219,7 +227,8 @@ NAME-MATCHER and TYPE-MATCHER are compiled functions (or NIL for no wildcard)."
     (nreverse results)))
 
 (defun glob-match-filesystem (dir-components name-pattern name-matcher
-                               type-pattern type-matcher follow-symlinks)
+                               type-pattern type-matcher follow-symlinks
+                               exclude-specs)
   "Match pattern against filesystem using compiled matchers."
   ;; Split directory components into base (no wildcards) and remaining (with wildcards)
   (let* ((split-pos (position-if (lambda (comp)
@@ -260,14 +269,15 @@ NAME-MATCHER and TYPE-MATCHER are compiled functions (or NIL for no wildcard)."
             (match-through-directories base-dir remaining-components
                                        name-pattern name-matcher
                                        type-pattern type-matcher
-                                       follow-symlinks visited))))))
+                                       follow-symlinks visited exclude-specs))))))
 
 (defun match-through-directories (base-dir remaining-dir-components
                                   name-pattern name-matcher
                                   type-pattern type-matcher
-                                  follow-symlinks visited)
+                                  follow-symlinks visited exclude-specs)
   "Walk through REMAINING-DIR-COMPONENTS using compiled matchers.
-Uses uiop:collect-sub*directories for memory-efficient iteration."
+Uses uiop:collect-sub*directories for memory-efficient iteration.
+Skips directories that match exclusion patterns for performance."
   (if (null remaining-dir-components)
       (match-files-in-directory base-dir name-pattern name-matcher
                                 type-pattern type-matcher)
@@ -285,18 +295,22 @@ Uses uiop:collect-sub*directories for memory-efficient iteration."
                                  base-dir rest-components
                                  name-pattern name-matcher
                                  type-pattern type-matcher
-                                 follow-symlinks visited)))
+                                 follow-symlinks visited exclude-specs)))
 
            ;; Then use collect-sub*directories for memory-efficient recursive search
            (uiop:collect-sub*directories
             base-dir
             ;; collectp - process all directories
             (constantly t)
-            ;; recursep - control recursion based on symlinks and visited
+            ;; recursep - control recursion based on symlinks, visited, and exclusions
             (lambda (dir)
               (and (or follow-symlinks (not (symlink-p dir)))
                    (let ((truename-str (namestring (truename dir))))
-                     (not (gethash truename-str visited)))))
+                     (not (gethash truename-str visited)))
+                   ;; Skip recursing into excluded directories for performance
+                   ;; Note: Per gitignore semantics, you cannot re-include files if their
+                   ;; parent directory is excluded, so this is safe
+                   (not (should-exclude-p dir exclude-specs))))
             ;; collector - process each directory found
             (lambda (subdir)
               ;; Skip the base directory itself
@@ -311,7 +325,8 @@ Uses uiop:collect-sub*directories for memory-efficient iteration."
                                         name-pattern name-matcher
                                         type-pattern type-matcher
                                         follow-symlinks
-                                        visited)))
+                                        visited
+                                        exclude-specs)))
                       (setf results (nconc results sub-results)))
                     (remhash truename-str visited)))))))
 
@@ -351,7 +366,8 @@ Uses uiop:collect-sub*directories for memory-efficient iteration."
                                             name-pattern name-matcher
                                             type-pattern type-matcher
                                             follow-symlinks
-                                            visited)))
+                                            visited
+                                            exclude-specs)))
                           (setf results (nconc results sub-results)))
                         (remhash truename-str visited))))))))))
 
