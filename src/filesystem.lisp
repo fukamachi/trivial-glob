@@ -6,6 +6,15 @@
    #:glob-filesystem))
 (in-package #:trivial-glob/filesystem)
 
+(defstruct (exclude-pattern-spec
+            (:copier nil)
+            (:predicate nil))
+  "Specification for an exclude pattern with optional negation.
+NEGATION - T if this is a negation pattern (starts with !), NIL for regular exclusion.
+MATCHER - Compiled path matcher function (pathname) -> boolean."
+  (negation nil :type boolean :read-only t)
+  (matcher nil :type function :read-only t))
+
 (defun has-wildcards-p (string)
   "Check if STRING contains glob wildcard characters."
   (some (lambda (char) (find char "*?[")) string))
@@ -57,18 +66,24 @@ on all platforms. It resolves relative paths to absolute before checking."
         (not (equal namestr-abs namestr-true)))
     (error () nil)))
 
-(defun filter-excluded (pathnames exclude-matchers)
-  "Filter out pathnames that match any exclude pattern.
+(defun filter-excluded (pathnames exclude-specs)
+  "Filter pathnames according to exclude patterns with optional negation.
 PATHNAMES - List of pathnames to filter.
-EXCLUDE-MATCHERS - List of compiled path matcher functions, or NIL.
+EXCLUDE-SPECS - List of exclude-pattern-spec structures, or NIL.
+                Patterns are processed sequentially; last match wins.
 Returns filtered list of pathnames."
-  (if (null exclude-matchers)
+  (if (null exclude-specs)
       pathnames
-      (remove-if (lambda (pathname)
-                   (some (lambda (matcher)
-                           (funcall matcher pathname))
-                         exclude-matchers))
-                 pathnames)))
+      (remove-if-not
+       (lambda (pathname)
+         ;; Start with included, process patterns sequentially
+         (let ((included t))
+           (dolist (spec exclude-specs)
+             (when (funcall (exclude-pattern-spec-matcher spec) pathname)
+               ;; This pattern matches - update inclusion state
+               (setf included (exclude-pattern-spec-negation spec))))
+           included))
+       pathnames)))
 
 (defun glob-filesystem (pathname-or-pattern &key follow-symlinks exclude)
   "Return a list of pathnames matching the glob pattern.
@@ -79,10 +94,21 @@ EXCLUDE - A pattern string or list of pattern strings to exclude from results.
 
 Returns a list of pathnames matching the pattern."
   ;; Compile exclude patterns once
-  (let ((exclude-matchers
+  (let ((exclude-specs
           (when exclude
             (let ((patterns (if (listp exclude) exclude (list exclude))))
-              (mapcar #'compiler:compile-path-pattern patterns))))
+              (mapcar (lambda (pattern)
+                        (if (and (< 0 (length pattern))
+                                 (char= (char pattern 0) #\!))
+                            ;; Negation pattern - strip '!' and set negation flag
+                            (make-exclude-pattern-spec
+                             :negation t
+                             :matcher (compiler:compile-path-pattern (subseq pattern 1)))
+                            ;; Regular exclusion pattern
+                            (make-exclude-pattern-spec
+                             :negation nil
+                             :matcher (compiler:compile-path-pattern pattern))))
+                      patterns))))
         (pattern-string (etypecase pathname-or-pattern
                           (pathname (namestring pathname-or-pattern))
                           (string
@@ -127,7 +153,7 @@ Returns a list of pathnames matching the pattern."
             (let ((path (pathname pattern-string)))
               (return-from glob-filesystem
                 (when (uiop:file-exists-p path)
-                  (filter-excluded (list (truename path)) exclude-matchers)))))
+                  (filter-excluded (list (truename path)) exclude-specs)))))
 
           ;; Compile filename patterns once
           (let ((name-matcher (when has-name-wildcard-p
@@ -162,7 +188,7 @@ Returns a list of pathnames matching the pattern."
                    (match-files-in-directory dir-path
                                              name-pattern name-matcher
                                              type-pattern type-matcher)
-                   exclude-matchers))))
+                   exclude-specs))))
 
             ;; Has directory wildcards - perform custom pattern matching
             (filter-excluded
@@ -170,7 +196,7 @@ Returns a list of pathnames matching the pattern."
                                     name-pattern name-matcher
                                     type-pattern type-matcher
                                     follow-symlinks)
-             exclude-matchers)))))))
+             exclude-specs)))))))
 
 (defun match-files-in-directory (directory name-pattern name-matcher type-pattern type-matcher)
   "Match files in DIRECTORY using compiled matchers.
