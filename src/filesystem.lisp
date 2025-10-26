@@ -66,6 +66,26 @@ on all platforms. It resolves relative paths to absolute before checking."
         (not (equal namestr-abs namestr-true)))
     (error () nil)))
 
+(defun expand-tilde (pattern-string)
+  "Expand tilde (~) in PATTERN-STRING to home directory if present.
+Returns the expanded pattern string."
+  (cond
+    ((and (> (length pattern-string) 0)
+          (char= (char pattern-string 0) #\~))
+     ;; Replace ~ or ~/ with home directory
+     (let ((home-dir (namestring (user-homedir-pathname))))
+       (cond
+         ((= (length pattern-string) 1)
+          ;; Just "~"
+          home-dir)
+         ((char= (char pattern-string 1) #\/)
+          ;; "~/..."
+          (concatenate 'string home-dir (subseq pattern-string 2)))
+         (t
+          ;; "~user/..." - not supported, use as-is
+          pattern-string))))
+    (t pattern-string)))
+
 (defun should-exclude-p (pathname exclude-specs)
   "Check if PATHNAME should be excluded according to EXCLUDE-SPECS.
 Returns T if the pathname should be excluded, NIL if it should be included.
@@ -118,24 +138,7 @@ Returns a list of pathnames matching the pattern."
                       patterns))))
         (pattern-string (etypecase pathname-or-pattern
                           (pathname (namestring pathname-or-pattern))
-                          (string
-                           ;; Expand tilde if present
-                           (cond
-                             ((and (> (length pathname-or-pattern) 0)
-                                   (char= (char pathname-or-pattern 0) #\~))
-                              ;; Replace ~ or ~/ with home directory
-                              (let ((home-dir (namestring (user-homedir-pathname))))
-                                (cond
-                                  ((= (length pathname-or-pattern) 1)
-                                   ;; Just "~"
-                                   home-dir)
-                                  ((char= (char pathname-or-pattern 1) #\/)
-                                   ;; "~/..."
-                                   (concatenate 'string home-dir (subseq pathname-or-pattern 2)))
-                                  (t
-                                   ;; "~user/..." - not supported, use as-is
-                                   pathname-or-pattern))))
-                             (t pathname-or-pattern))))))
+                          (string (expand-tilde pathname-or-pattern)))))
 
     ;; Parse pattern string ourselves to avoid CL pathname corruption
     (multiple-value-bind (dir-components filename-pattern)
@@ -174,15 +177,15 @@ Returns a list of pathnames matching the pattern."
                        (not has-dir-wildcard-p))
               ;; Build directory path
               (let* ((dir-path (if dir-components
-                                  (make-pathname :directory (cons (if (string= (first dir-components) "")
-                                                                      :absolute
-                                                                      :relative)
-                                                                  (if (string= (first dir-components) "")
-                                                                      (rest dir-components)
-                                                                      dir-components))
-                                                :name nil
-                                                :type nil)
-                                  (uiop:getcwd))))
+                                   (make-pathname :directory (cons (if (string= (first dir-components) "")
+                                                                       :absolute
+                                                                       :relative)
+                                                                   (if (string= (first dir-components) "")
+                                                                       (rest dir-components)
+                                                                       dir-components))
+                                                  :name nil
+                                                  :type nil)
+                                   (uiop:getcwd))))
                 (unless (uiop:directory-exists-p dir-path)
                   (error 'file-error
                          :pathname dir-path
@@ -227,8 +230,8 @@ NAME-MATCHER and TYPE-MATCHER are compiled functions (or NIL for no wildcard)."
     (nreverse results)))
 
 (defun glob-match-filesystem (dir-components name-pattern name-matcher
-                               type-pattern type-matcher follow-symlinks
-                               exclude-specs)
+                              type-pattern type-matcher follow-symlinks
+                              exclude-specs)
   "Match pattern against filesystem using compiled matchers."
   ;; Split directory components into base (no wildcards) and remaining (with wildcards)
   (let* ((split-pos (position-if (lambda (comp)

@@ -50,38 +50,43 @@ Matches if any of the options match."
 
 ;;; POSIX Character Class Predicates (resolved at compile time)
 
+(defvar *posix-class-predicates*
+  (let ((table (make-hash-table :test 'equal)))
+    (setf (gethash "alnum" table) #'alphanumericp)
+    (setf (gethash "alpha" table) #'alpha-char-p)
+    (setf (gethash "digit" table) #'digit-char-p)
+    (setf (gethash "lower" table) #'lower-case-p)
+    (setf (gethash "upper" table) #'upper-case-p)
+    (setf (gethash "space" table)
+          (lambda (char)
+            (member char '(#\Space #\Tab #\Newline #\Return #\Linefeed #\Page))))
+    (setf (gethash "blank" table)
+          (lambda (char) (or (char= char #\Space) (char= char #\Tab))))
+    (setf (gethash "punct" table)
+          (lambda (char)
+            (and (graphic-char-p char)
+                 (not (alphanumericp char))
+                 (not (char= char #\Space)))))
+    (setf (gethash "print" table)
+          (lambda (char) (or (graphic-char-p char) (char= char #\Space))))
+    (setf (gethash "graph" table) #'graphic-char-p)
+    (setf (gethash "cntrl" table)
+          (lambda (char)
+            (or (< (char-code char) 32)
+                (= (char-code char) 127))))
+    (setf (gethash "xdigit" table)
+          (lambda (char)
+            (or (digit-char-p char)
+                (and (char<= #\a char) (char<= char #\f))
+                (and (char<= #\A char) (char<= char #\F)))))
+    table)
+  "Hash table mapping POSIX character class names to predicate functions.")
+
 (defun resolve-posix-class-predicate (class-name)
   "Resolve a POSIX class name to a predicate function at compile time.
 Returns a function (char) -> boolean."
-  (cond
-    ((string= class-name "alnum") #'alphanumericp)
-    ((string= class-name "alpha") #'alpha-char-p)
-    ((string= class-name "digit") #'digit-char-p)
-    ((string= class-name "lower") #'lower-case-p)
-    ((string= class-name "upper") #'upper-case-p)
-    ((string= class-name "space")
-     (lambda (char)
-       (member char '(#\Space #\Tab #\Newline #\Return #\Linefeed #\Page))))
-    ((string= class-name "blank")
-     (lambda (char) (or (char= char #\Space) (char= char #\Tab))))
-    ((string= class-name "punct")
-     (lambda (char)
-       (and (graphic-char-p char)
-            (not (alphanumericp char))
-            (not (char= char #\Space)))))
-    ((string= class-name "print")
-     (lambda (char) (or (graphic-char-p char) (char= char #\Space))))
-    ((string= class-name "graph") #'graphic-char-p)
-    ((string= class-name "cntrl")
-     (lambda (char)
-       (or (< (char-code char) 32)
-           (= (char-code char) 127))))
-    ((string= class-name "xdigit")
-     (lambda (char)
-       (or (digit-char-p char)
-           (and (char<= #\a char) (char<= char #\f))
-           (and (char<= #\A char) (char<= char #\F)))))
-    (t (lambda (char) (declare (ignore char)) nil))))
+  (gethash class-name *posix-class-predicates*
+           (lambda (char) (declare (ignore char)) nil)))
 
 (defun compile-char-class-predicate (ranges classes negated casefold)
   "Generate an optimized predicate closure for a character class.
@@ -95,10 +100,10 @@ Returns a function (char) -> boolean."
         ;; Check ranges (compile-time list, runtime iteration)
         (loop for (start . end) in ranges
               do (when (if casefold
-                          (and (char<= start (char-upcase char))
-                               (char<= (char-upcase char) end))
-                          (and (char<= start char)
-                               (char<= char end)))
+                           (and (char<= start (char-upcase char))
+                                (char<= (char-upcase char) end))
+                           (and (char<= start char)
+                                (char<= char end)))
                    (setf matched t)
                    (return)))
         ;; Check POSIX class predicates (compile-time resolved)
@@ -112,49 +117,118 @@ Returns a function (char) -> boolean."
 
 ;;; Code Generation - Convert AST to Matcher Functions
 
+(defun generate-literal-matcher (text casefold)
+  "Generate a matcher for literal text.
+Returns a matcher function (string start end) -> (or null position)."
+  (let ((text-len (length text)))
+    (if casefold
+        (lambda (string start end)
+          (when (and (<= (+ start text-len) end)
+                     (string-equal text string :start2 start :end2 (+ start text-len)))
+            (+ start text-len)))
+        (lambda (string start end)
+          (when (and (<= (+ start text-len) end)
+                     (string= text string :start2 start :end2 (+ start text-len)))
+            (+ start text-len))))))
+
+(defun generate-wildcard-matcher (match-slash)
+  "Generate a matcher for wildcard (?) character.
+Returns a matcher function (string start end) -> (or null position)."
+  (if match-slash
+      (lambda (string start end)
+        (declare (ignore string))
+        (when (< start end)
+          (1+ start)))
+      (lambda (string start end)
+        (when (and (< start end)
+                   (char/= (char string start) #\/))
+          (1+ start)))))
+
+(defun generate-star-matcher (match-slash)
+  "Generate a matcher for star (*) character.
+Returns a matcher function (string start end) -> (or null position)."
+  (if match-slash
+      (lambda (string start end)
+        (declare (ignore string start))
+        ;; Match to end
+        end)
+      (lambda (string start end)
+        ;; Find the next / or end
+        (let ((pos start))
+          (loop while (and (< pos end) (char/= (char string pos) #\/))
+                do (incf pos))
+          pos))))
+
+(defun generate-sequence-matcher-with-backtracking (elements match-slash period casefold)
+  "Generate a sequence matcher that supports backtracking for star/doublestar nodes.
+Returns a matcher function (string start end) -> (or null position)."
+  (lambda (string start end)
+    (labels ((try-match (remaining-elems pos)
+               (cond
+                 ((null remaining-elems) pos)  ; Success
+                 ((star-node-p (first remaining-elems))
+                  ;; Star node - try matching 0 to (end - pos) characters
+                  (let ((rest-pattern (rest remaining-elems))
+                        (can-match-slash match-slash))
+                    ;; Try from longest match to shortest (greedy)
+                    (some (lambda (star-end)
+                            (when (or can-match-slash
+                                      (not (find #\/ string :start pos :end star-end)))
+                              (try-match rest-pattern star-end)))
+                          (loop for i from end downto pos collect i))))
+                 ((doublestar-node-p (first remaining-elems))
+                  ;; Doublestar node - matches zero or more path segments
+                  (let ((rest-pattern (rest remaining-elems)))
+                    (if (null rest-pattern)
+                        ;; ** at end of pattern - matches everything remaining
+                        end
+                        ;; ** with more pattern after it - try matching rest at various positions
+                        ;; Try from longest match to shortest (greedy, like star-node)
+                        (some (lambda (try-pos)
+                                (try-match rest-pattern try-pos))
+                              ;; Collect positions after each '/' in reverse, then try zero-match last
+                              (append (reverse (loop for i from pos below end
+                                                     when (char= (char string i) #\/)
+                                                       collect (1+ i)))
+                                      (list pos))))))
+                 (t
+                  ;; Non-star/doublestar node
+                  (let* ((matcher (generate-matcher (first remaining-elems) match-slash period casefold))
+                         (result (funcall matcher string pos end)))
+                    (when result
+                      (try-match (rest remaining-elems) result)))))))
+      (try-match elements start))))
+
+(defun generate-sequence-matcher-simple (elements match-slash period casefold)
+  "Generate a simple sequence matcher without backtracking.
+Returns a matcher function (string start end) -> (or null position)."
+  (let ((element-matchers
+          (mapcar (lambda (elem) (generate-matcher elem match-slash period casefold))
+                  elements)))
+    (lambda (string start end)
+      (labels ((match-sequence (matchers pos)
+                 (if (null matchers)
+                     pos
+                     (let ((result (funcall (first matchers) string pos end)))
+                       (when result
+                         (match-sequence (rest matchers) result))))))
+        (match-sequence element-matchers start)))))
+
 (defun generate-matcher (node match-slash period casefold)
   "Generate a matcher function from a pattern node.
 Returns a function (string start end) -> (or null position) that attempts to match
 from START position and returns the ending position if successful, or NIL."
   (etypecase node
     (literal-node
-     (let ((text (literal-node-text node))
-           (text-len (length (literal-node-text node))))
-       (if casefold
-           (lambda (string start end)
-             (when (and (<= (+ start text-len) end)
-                        (string-equal text string :start2 start :end2 (+ start text-len)))
-               (+ start text-len)))
-           (lambda (string start end)
-             (when (and (<= (+ start text-len) end)
-                        (string= text string :start2 start :end2 (+ start text-len)))
-               (+ start text-len))))))
+     (generate-literal-matcher (literal-node-text node) casefold))
 
     (wildcard-node
      ;; ? matches exactly one character (not / unless match-slash is true)
-     (if match-slash
-         (lambda (string start end)
-           (declare (ignore string))
-           (when (< start end)
-             (1+ start)))
-         (lambda (string start end)
-           (when (and (< start end)
-                      (char/= (char string start) #\/))
-             (1+ start)))))
+     (generate-wildcard-matcher match-slash))
 
     (star-node
      ;; * matches zero or more characters (not / unless match-slash is true)
-     (if match-slash
-         (lambda (string start end)
-           (declare (ignore string start))
-           ;; Match to end
-           end)
-         (lambda (string start end)
-           ;; Find the next / or end
-           (let ((pos start))
-             (loop while (and (< pos end) (char/= (char string pos) #\/))
-                   do (incf pos))
-             pos))))
+     (generate-star-matcher match-slash))
 
     (doublestar-node
      ;; ** matches zero or more directory levels
@@ -182,60 +256,15 @@ from START position and returns the ending position if successful, or NIL."
      (let ((elements (sequence-node-elements node)))
        (if (some (lambda (elem) (or (star-node-p elem) (doublestar-node-p elem))) elements)
            ;; Contains stars/doublestars - need backtracking support
-           (lambda (string start end)
-             (labels ((try-match (remaining-elems pos)
-                        (cond
-                          ((null remaining-elems) pos)  ; Success
-                          ((star-node-p (first remaining-elems))
-                           ;; Star node - try matching 0 to (end - pos) characters
-                           (let ((rest-pattern (rest remaining-elems))
-                                 (can-match-slash match-slash))
-                             ;; Try from longest match to shortest (greedy)
-                             (some (lambda (star-end)
-                                     (when (or can-match-slash
-                                              (not (find #\/ string :start pos :end star-end)))
-                                       (try-match rest-pattern star-end)))
-                                   (loop for i from end downto pos collect i))))
-                          ((doublestar-node-p (first remaining-elems))
-                           ;; Doublestar node - matches zero or more path segments
-                           (let ((rest-pattern (rest remaining-elems)))
-                             (if (null rest-pattern)
-                                 ;; ** at end of pattern - matches everything remaining
-                                 end
-                                 ;; ** with more pattern after it - try matching rest at various positions
-                                 ;; Try from longest match to shortest (greedy, like star-node)
-                                 (some (lambda (try-pos)
-                                         (try-match rest-pattern try-pos))
-                                       ;; Collect positions after each '/' in reverse, then try zero-match last
-                                       (append (reverse (loop for i from pos below end
-                                                              when (char= (char string i) #\/)
-                                                              collect (1+ i)))
-                                               (list pos))))))
-                          (t
-                           ;; Non-star/doublestar node
-                           (let* ((matcher (generate-matcher (first remaining-elems) match-slash period casefold))
-                                  (result (funcall matcher string pos end)))
-                             (when result
-                               (try-match (rest remaining-elems) result)))))))
-               (try-match elements start)))
+           (generate-sequence-matcher-with-backtracking elements match-slash period casefold)
            ;; No stars/doublestars - simple sequential matching
-           (let ((element-matchers
-                  (mapcar (lambda (elem) (generate-matcher elem match-slash period casefold))
-                          elements)))
-             (lambda (string start end)
-               (labels ((match-sequence (matchers pos)
-                          (if (null matchers)
-                              pos
-                              (let ((result (funcall (first matchers) string pos end)))
-                                (when result
-                                  (match-sequence (rest matchers) result))))))
-                 (match-sequence element-matchers start)))))))
+           (generate-sequence-matcher-simple elements match-slash period casefold))))
 
     (alternatives-node
      ;; Try each alternative in order
      (let ((alt-matchers
-            (mapcar (lambda (alt) (generate-matcher alt match-slash period casefold))
-                    (alternatives-node-options node))))
+             (mapcar (lambda (alt) (generate-matcher alt match-slash period casefold))
+                     (alternatives-node-options node))))
        (lambda (string start end)
          (loop for matcher in alt-matchers
                for result = (funcall matcher string start end)
